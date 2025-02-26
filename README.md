@@ -76,4 +76,6 @@ uv run --active streamlit run main.py
 
 # update a specific library manually
 uv pip install --upgrade yfinance
+# deleting streamlit cache after changes that are related to fetch and analysis of data
+streamlit cache clear
 ```

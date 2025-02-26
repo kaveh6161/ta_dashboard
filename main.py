@@ -154,6 +154,15 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
         tuple: A Plotly figure and an optional error analysis object.
     """
     try:
+        # Ensure that key columns are 1-dimensional Series
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            if col in data.columns:
+                data[col] = data[col].squeeze()
+        
+        # (Optional) Print shapes for debugging
+        # for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        #     print(f"{col} shape: {data[col].shape}")
+        
         # Separate oscillator indicators from overlay indicators for layout purposes
         oscillator_list = [ind for ind in indicators if ind not in overlay_indicators_set]
         total_rows = 2 + len(oscillator_list)  # 1 row for candlestick, 1 for volume, rest for oscillators
@@ -472,8 +481,11 @@ def fetch_stock_data(tickers, start_date, end_date, yf_interval):
     stock_data = {}
     with st.spinner("Fetching Stock Data..."):
         for t in tickers:
-            data = yf.download(t, start=start_date, end=adjusted_end, interval=yf_interval)
+            data = yf.download(t, start=start_date, end=adjusted_end, interval=yf_interval, multi_level_index=False)
             if not data.empty:
+                # Force all columns to be 1-dimensional
+                for col in data.columns:
+                    data[col] = data[col].squeeze()
                 stock_data[t] = data
             else:
                 st.warning(f"No data found for {t}.")
@@ -486,6 +498,14 @@ def fetch_stock_data(tickers, start_date, end_date, yf_interval):
 if st.sidebar.button("Fetch Data"):
     st.session_state["stock_data"] = fetch_stock_data(tickers, start_date, end_date, yf_interval)
     st.session_state.pop("analysis_results", None)  # Reset previous AI analysis results
+
+# ------------------------------------------------------------------------------
+# Clear Cached Data
+# ------------------------------------------------------------------------------
+# Button trigger to clear streamlit cache data (mostly used for troubleshooting)
+if st.sidebar.button("Clear Cache"):
+    st.cache_data.clear()
+    st.success("Cache has been cleared!")
 
 # ------------------------------------------------------------------------------
 # Generate & Display Charts
