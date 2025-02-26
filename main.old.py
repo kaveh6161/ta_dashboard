@@ -13,11 +13,9 @@ import tempfile  # Module for creating temporary files
 import os  # OS module for interacting with the operating system
 import json  # Library for handling JSON data
 from datetime import datetime, timedelta  # For working with dates and time intervals
-import io
 from io import BytesIO  # In-memory binary streams for image handling
 import re  # Regular expressions for text processing
 import base64  # For encoding binary data into a base64 string for downloads
-import requests
 
 import google.generativeai as genai  # Google Generative AI client library
 from google.generativeai import types  # Importing specific types from the generative AI library
@@ -29,6 +27,7 @@ from ta.volatility import BollingerBands, AverageTrueRange
 from ta.momentum import RSIIndicator, StochasticOscillator, ROCIndicator, WilliamsRIndicator
 from ta.volume import OnBalanceVolumeIndicator, VolumeWeightedAveragePrice, MFIIndicator
 from dotenv import load_dotenv
+
 
 # ------------------------------------------------------------------------------
 # 2. API & Model Configuration
@@ -55,20 +54,15 @@ if st.sidebar.button("Reset App"):
     st.session_state.clear()
 
 # ------------------------------------------------------------------------------
-# Clear Cached Data
-# ------------------------------------------------------------------------------
-if st.sidebar.button("Clear Cache"):
-    st.cache_data.clear()
-    st.success("Cache has been cleared!")
-
-# ------------------------------------------------------------------------------
 # Timeframe & Date Range
 # ------------------------------------------------------------------------------
+# Sidebar selectbox to choose the chart timeframe
 timeframe = st.sidebar.selectbox(
     "Timeframe:",
     ["Daily", "Weekly", "1 Hour", "30 Minutes", "15 Minutes", "5 Minutes", "1 Minute"],
     index=0
 )
+# Map human-readable timeframes to yfinance interval codes
 interval_map = {
     "Daily": "1d",
     "Weekly": "1wk",
@@ -78,23 +72,27 @@ interval_map = {
     "5 Minutes": "5m",
     "1 Minute": "1m"
 }
-yf_interval = interval_map[timeframe]
+yf_interval = interval_map[timeframe]  # Determine the interval to use for fetching data
 
-end_date_default = datetime.today()
+end_date_default = datetime.today()  # Default end date is today's date
+# Set a shorter historical period for intraday data and a longer one for daily/weekly data
 if timeframe in ["1 Hour", "30 Minutes", "15 Minutes", "5 Minutes", "1 Minute"]:
     start_date_default = end_date_default - timedelta(days=7)
 else:
     start_date_default = end_date_default - timedelta(days=365)
 
+# Date inputs in the sidebar for selecting custom start and end dates
 start_date = st.sidebar.date_input("Start Date", value=start_date_default)
 end_date = st.sidebar.date_input("End Date", value=end_date_default)
 
 # ------------------------------------------------------------------------------
 # Ticker & Indicator Selection
 # ------------------------------------------------------------------------------
+# Sidebar text input for users to enter stock ticker symbols (comma-separated)
 tickers_input = st.sidebar.text_input("Enter Stock Tickers (comma-separated):", "AAPL,MSFT,GOOG")
-tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
+tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]  # Clean and format ticker symbols
 
+# Sidebar multi-select for choosing technical indicators to display on the chart
 st.sidebar.subheader("Technical Indicators")
 indicators = st.sidebar.multiselect(
     "Select Indicators:",
@@ -106,13 +104,16 @@ indicators = st.sidebar.multiselect(
     default=["SMA"]
 )
 
-selected_indicators_code = indicators
+selected_indicators_code = indicators  # Store selected indicators for later reference
+
+# Set of indicators that will be overlaid directly on the main price chart
 overlay_indicators_set = {"SMA", "EMA", "Bollinger Bands", "VWAP", "Fibonacci Retracements"}
 
 # ------------------------------------------------------------------------------
 # Indicator Parameters
 # ------------------------------------------------------------------------------
 indicator_params = {}
+# Provide sliders for indicator-specific parameters in the sidebar based on selected indicators
 if any(i in indicators for i in ["SMA", "EMA", "Bollinger Bands"]):
     indicator_params["length_20"] = st.sidebar.slider("Length (SMA/EMA/Bollinger)", 5, 100, 20)
 if "RSI" in indicators:
@@ -142,28 +143,52 @@ if "MFI" in indicators:
 # The Analyze Function
 # ------------------------------------------------------------------------------
 def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
+    """
+    Analyzes a given stock ticker's historical data, overlays technical indicators,
+    and constructs a multi-panel Plotly chart.
+
+    Parameters:
+        ticker (str): Stock ticker symbol.
+        data (DataFrame): Historical price and volume data.
+        indicator_params (dict): Parameters for the technical indicators.
+        start_date (date): Analysis start date.
+        end_date (date): Analysis end date.
+
+    Returns:
+        tuple: A Plotly figure and an optional error analysis object.
+    """
     try:
+        # Ensure that key columns are 1-dimensional Series
         for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
             if col in data.columns:
                 data[col] = data[col].squeeze()
         
+        # (Optional) Print shapes for debugging
+        # for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+        #     print(f"{col} shape: {data[col].shape}")
+        
+        # Separate oscillator indicators from overlay indicators for layout purposes
         oscillator_list = [ind for ind in indicators if ind not in overlay_indicators_set]
-        total_rows = 2 + len(oscillator_list)
+        total_rows = 2 + len(oscillator_list)  # 1 row for candlestick, 1 for volume, rest for oscillators
 
-        row_specs = []
-        row_heights = []
+        row_specs = []  # Specifications for each subplot row
+        row_heights = []  # Relative heights for each subplot row
 
+        # Main price chart (candlestick)
         row_specs.append([{"secondary_y": False}])
         row_heights.append(0.4)
+        # Volume bar chart row
         row_specs.append([{"secondary_y": False}])
         row_heights.append(0.2)
 
+        # Additional rows for oscillator indicators
         if oscillator_list:
             each_height = 0.4 / len(oscillator_list)
             for _ in oscillator_list:
                 row_specs.append([{"secondary_y": False}])
                 row_heights.append(each_height)
 
+        # Create a Plotly figure with subplots for price, volume, and oscillators
         fig = make_subplots(
             rows=total_rows, cols=1,
             shared_xaxes=True,
@@ -172,6 +197,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
             specs=row_specs
         )
 
+        # Add candlestick chart trace for price data
         fig.add_trace(
             go.Candlestick(
                 x=data.index,
@@ -184,6 +210,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
             row=1, col=1
         )
 
+        # Add volume bar chart trace
         fig.add_trace(
             go.Bar(
                 x=data.index,
@@ -194,27 +221,32 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
             row=2, col=1
         )
 
+        # Hide x-axis tick labels for all rows except the bottom one
         for r in range(1, total_rows):
             if r != total_rows:
                 fig.update_xaxes(showticklabels=False, row=r, col=1)
 
-        fig.update_layout(xaxis_rangeslider_visible=False)
+        fig.update_layout(xaxis_rangeslider_visible=False)  # Remove the default range slider
 
+        # Nested function to add overlay indicators on the main price chart
         def add_overlay(ind_name):
             length_20  = indicator_params.get("length_20", 20)
             if ind_name == "SMA":
+                # Calculate Simple Moving Average and add to chart
                 sma_val = ta.trend.SMAIndicator(close=data['Close'], window=length_20).sma_indicator()
                 fig.add_trace(
                     go.Scatter(x=data.index, y=sma_val, mode='lines', name=f"SMA({length_20})"),
                     row=1, col=1
                 )
             elif ind_name == "EMA":
+                # Calculate Exponential Moving Average and add to chart
                 ema_val = ta.trend.EMAIndicator(close=data['Close'], window=length_20).ema_indicator()
                 fig.add_trace(
                     go.Scatter(x=data.index, y=ema_val, mode='lines', name=f"EMA({length_20})"),
                     row=1, col=1
                 )
             elif ind_name == "Bollinger Bands":
+                # Compute Bollinger Bands and add upper and lower bands to chart
                 bb = BollingerBands(close=data['Close'], window=length_20, window_dev=2)
                 upper = bb.bollinger_hband()
                 lower = bb.bollinger_lband()
@@ -227,6 +259,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=1, col=1
                 )
             elif ind_name == "VWAP":
+                # Compute Volume Weighted Average Price and overlay it
                 vwap_data = ta.volume.VolumeWeightedAveragePrice(
                     high=data['High'], low=data['Low'], close=data['Close'], volume=data['Volume']
                 ).volume_weighted_average_price()
@@ -235,6 +268,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=1, col=1
                 )
             elif ind_name == "Fibonacci Retracements":
+                # Compute key Fibonacci retracement levels based on high and low price points
                 high_pt = data['High'].max()
                 low_pt  = data['Low'].min()
                 diff = high_pt - low_pt
@@ -252,7 +286,9 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                         row=1, col=1
                     )
 
+        # Nested function to add oscillator indicators to designated subplot rows
         def add_oscillator(ind_name, row_idx):
+            # Retrieve parameter values with defaults if not specified
             length_20  = indicator_params.get("length_20", 20)
             rsi_length = indicator_params.get("rsi_length", 14)
             macd_fast  = indicator_params.get("macd_fast", 12)
@@ -268,12 +304,14 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
             mfi_length = indicator_params.get("mfi_length", 14)
 
             if ind_name == "RSI":
+                # Compute Relative Strength Index
                 rsi_val = ta.momentum.RSIIndicator(close=data['Close'], window=rsi_length).rsi()
                 fig.add_trace(
                     go.Scatter(x=data.index, y=rsi_val, mode='lines', name=f"RSI({rsi_length})"),
                     row=row_idx, col=1
                 )
             elif ind_name == "MACD":
+                # Compute MACD components: line, signal, and histogram
                 macd_obj = ta.trend.MACD(
                     close=data['Close'],
                     window_slow=macd_slow,
@@ -296,12 +334,14 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=row_idx, col=1
                 )
             elif ind_name == "OBV":
+                # Compute On Balance Volume
                 obv_val = ta.volume.OnBalanceVolumeIndicator(close=data['Close'], volume=data['Volume']).on_balance_volume()
                 fig.add_trace(
                     go.Scatter(x=data.index, y=obv_val, mode='lines', name="OBV"),
                     row=row_idx, col=1
                 )
             elif ind_name == "Stochastic Oscillator":
+                # Compute the Stochastic Oscillator %K and %D lines
                 stoch = ta.momentum.StochasticOscillator(
                     high=data['High'], low=data['Low'], close=data['Close'],
                     window=stoch_k, smooth_window=stoch_d
@@ -317,6 +357,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=row_idx, col=1
                 )
             elif ind_name == "ATR":
+                # Compute Average True Range to assess volatility
                 atr_val = ta.volatility.AverageTrueRange(
                     high=data['High'], low=data['Low'], close=data['Close'], window=atr_length
                 ).average_true_range()
@@ -325,6 +366,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=row_idx, col=1
                 )
             elif ind_name == "ADX":
+                # Compute ADX and directional indicators to gauge trend strength
                 adx_obj = ta.trend.ADXIndicator(
                     high=data['High'], low=data['Low'], close=data['Close'], window=adx_length
                 )
@@ -344,6 +386,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=row_idx, col=1
                 )
             elif ind_name == "CCI":
+                # Compute Commodity Channel Index
                 cci_val = ta.trend.CCIIndicator(
                     high=data['High'], low=data['Low'], close=data['Close'], window=cci_length
                 ).cci()
@@ -352,6 +395,7 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=row_idx, col=1
                 )
             elif ind_name == "Williams %R":
+                # Compute Williams %R momentum indicator
                 wr_val = ta.momentum.WilliamsRIndicator(
                     high=data['High'], low=data['Low'], close=data['Close'], lbp=wr_length
                 ).williams_r()
@@ -360,12 +404,14 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=row_idx, col=1
                 )
             elif ind_name == "ROC":
+                # Compute Rate of Change indicator
                 roc_val = ta.momentum.ROCIndicator(close=data['Close'], window=roc_length).roc()
                 fig.add_trace(
                     go.Scatter(x=data.index, y=roc_val, mode='lines', name=f"ROC({roc_length})"),
                     row=row_idx, col=1
                 )
             elif ind_name == "MFI":
+                # Compute Money Flow Index indicator
                 mfi_val = ta.volume.MFIIndicator(
                     high=data['High'], low=data['Low'], close=data['Close'],
                     volume=data['Volume'], window=mfi_length
@@ -375,18 +421,22 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
                     row=row_idx, col=1
                 )
 
+        # Add overlay indicators to the main price chart
         for ov in [i for i in indicators if i in overlay_indicators_set]:
             add_overlay(ov)
 
+        # Add oscillator indicators in their designated subplot rows and label y-axes
         osc_row_start = 3
         for i, osc_ind in enumerate(oscillator_list):
             row_idx = osc_row_start + i
             add_oscillator(osc_ind, row_idx)
             fig.update_yaxes(title_text=osc_ind, row=row_idx, col=1)
 
+        # Update overall layout settings for aesthetics and legend placement
         fig.update_layout(
             template="plotly",
             height=1600,
+            # title=f"{ticker} - {timeframe} Chart ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})",
             legend=dict(
                 orientation="h",
                 yanchor="bottom",
@@ -399,10 +449,12 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
         fig.update_yaxes(title_text="Price + Overlays", row=1, col=1)
         fig.update_yaxes(title_text="Volume", row=2, col=1)
 
+        # Store the generated figure in session state for later retrieval
         st.session_state[f"plotly_fig_{ticker}"] = fig
         return fig, None
 
     except Exception as e:
+        # Handle exceptions by displaying an error message and returning an error analysis object
         st.error(f"General error in analyze_ticker: {e}")
         return (None, {
             "action": "Error",
@@ -414,6 +466,19 @@ def analyze_ticker(ticker, data, indicator_params, start_date, end_date):
 # ------------------------------------------------------------------------------
 @st.cache_data(ttl=timedelta(minutes=30))
 def fetch_stock_data(tickers, start_date, end_date, yf_interval):
+    """
+    Fetches historical stock data for each ticker using yfinance.
+    Caches results for 30 minutes to reduce redundant API calls.
+
+    Parameters:
+        tickers (list): List of ticker symbols.
+        start_date (date): Start date for data fetching.
+        end_date (date): End date for data fetching.
+        yf_interval (str): Interval string compatible with yfinance.
+
+    Returns:
+        dict: A dictionary with ticker symbols as keys and their corresponding data DataFrames.
+    """
     adjusted_end = end_date
     if start_date == end_date:
         adjusted_end = start_date + timedelta(days=1)
@@ -422,6 +487,7 @@ def fetch_stock_data(tickers, start_date, end_date, yf_interval):
         for t in tickers:
             data = yf.download(t, start=start_date, end=adjusted_end, interval=yf_interval, multi_level_index=False)
             if not data.empty:
+                # Force all columns to be 1-dimensional
                 for col in data.columns:
                     data[col] = data[col].squeeze()
                 stock_data[t] = data
@@ -430,20 +496,25 @@ def fetch_stock_data(tickers, start_date, end_date, yf_interval):
     return stock_data
 
 # ------------------------------------------------------------------------------
-# Technical Analysis
-# ------------------------------------------------------------------------------
-st.sidebar.header("Technical Analysis")
-
-# ------------------------------------------------------------------------------
 # Fetch Data
 # ------------------------------------------------------------------------------
+# Button trigger to fetch stock data and store it in session state
 if st.sidebar.button("Fetch Data"):
     st.session_state["stock_data"] = fetch_stock_data(tickers, start_date, end_date, yf_interval)
-    st.session_state.pop("analysis_results", None)
+    st.session_state.pop("analysis_results", None)  # Reset previous AI analysis results
+
+# ------------------------------------------------------------------------------
+# Clear Cached Data
+# ------------------------------------------------------------------------------
+# Button trigger to clear streamlit cache data (mostly used for troubleshooting)
+if st.sidebar.button("Clear Cache"):
+    st.cache_data.clear()
+    st.success("Cache has been cleared!")
 
 # ------------------------------------------------------------------------------
 # Generate & Display Charts
 # ------------------------------------------------------------------------------
+# Iterate over fetched stock data and generate Plotly charts if not already created
 if "stock_data" in st.session_state and st.session_state["stock_data"]:
     for tkr in st.session_state["stock_data"]:
         if f"plotly_fig_{tkr}" not in st.session_state:
@@ -455,6 +526,7 @@ if "stock_data" in st.session_state and st.session_state["stock_data"]:
 # ------------------------------------------------------------------------------
 # Run AI Analysis
 # ------------------------------------------------------------------------------
+# Button trigger to perform AI-based technical analysis using the generated charts
 if st.sidebar.button("Run AI Technical Analysis"):
     if "stock_data" not in st.session_state or not st.session_state["stock_data"]:
         st.warning("Please fetch stock data first.")
@@ -475,29 +547,23 @@ if st.sidebar.button("Run AI Technical Analysis"):
                         img_bytes = f.read()
                     os.remove(tmp_path)
 
-                    # [CHANGED] Remove "system" role. Merge it into user role text.
+                    # Construct the analysis prompt including chart context and selected indicator parameters
                     analysis_prompt = (
-                        "You are an 10x expert Financial Analyst who focuses on Technical Analysis at a top financial institution. "
-                        "Return your result as valid JSON only. "
-                        f"Analyze the stock chart for {tkr} ({timeframe} timeframe) based on its candlestick chart, volume, and "
-                        f"the displayed technical indicators: {', '.join(selected_indicators_code)}. "
+                        "You are an 10x expert Financial Analyst who focuses on Technical Analysis at a top financial institution."
+                        f"Analyze the stock chart for {tkr} ({timeframe} timeframe) based on its candlestick chart, volume, and the displayed technical indicators: {', '.join(selected_indicators_code)}. "
                         f"Taking into account the parameters chosen for each indicator, "
-                        "Provide a detailed justification of your analysis, explaining patterns, signals, and trends, "
-                        "explicitly mentioning the indicators and their parameter settings that lead to your conclusions. "
-                        "Your interpretation should take into account the time frame examined, whether it's day trading, "
-                        "longer-term investing, or anything in-between. "
-                        "Based *only* on the chart, recommend an action ('Strong Buy', 'Buy', 'Weak Buy', 'Hold', 'Weak Sell', "
-                        "'Sell', or 'Strong Sell') and provide a confidence score (1-10, 10 highest confidence). "
-                        "Return a JSON object with 'action', 'confidence_score', 'price_target', and 'justification'."
+                        f"Provide a detailed justification of your analysis, explaining patterns, signals, and trends, explicitly mentioning the indicators and their parameter settings that lead to your conclusions. "
+                        "Your interpretation should take into account the time frame examined, whether it's day trading, longer-term investing, or anything in-between. "
+                        f"Based *only* on the chart, recommend an action ('Strong Buy', 'Buy', 'Weak Buy', 'Hold', 'Weak Sell', 'Sell', or 'Strong Sell') and provide a confidence score (1-10, 10 highest confidence). "
+                        f"Return a JSON object with 'action', 'confidence_score', 'price_target', and 'justification'."
                     )
-
+                    # Package the chart image data for the AI model
                     image_part = {"data": img_bytes, "mime_type": "image/png"}
 
                     with st.spinner("AI Analyzing Chart..."):
+                        # Prepare the conversation payload with both text and image inputs for the generative model
                         contents = [
-                            # Single user role with instructions
                             {"role": "user", "parts": [analysis_prompt]},
-                            # The second user part with the image
                             {"role": "user", "parts": [image_part]}
                         ]
                         response = gen_model.generate_content(contents=contents)
@@ -537,39 +603,36 @@ if st.sidebar.button("Run AI Technical Analysis"):
         st.success("AI Technical Analysis Completed!")
 
 # ------------------------------------------------------------------------------
-# News & Sentiment Analysis
+# News Sentiment Analysis
 # ------------------------------------------------------------------------------
+# Calls news_gathering.py and sentiment_analysis.py to do their thing
 st.sidebar.header("News & Sentiment Analysis")
 
 if st.sidebar.button("Fetch and Submit News"):
-    ticker = "AAPL"
+    # Replace with your actual ticker and Google Form URL
+    ticker = "AAPL"  
     forms_url = "https://docs.google.com/forms/d/e/1FAIpQLSd4thJmOPdR04W998INg6CeVDViR6HZu0KDveQQoL_aL5H3NQ/formResponse"
     news_data = main_news(ticker, forms_url)
     if news_data:
         st.success("News data fetched and submitted!")
 
 if st.sidebar.button("Run AI Sentiment Analysis"):
-    csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQrwIWMC_TxpeQENtV6SdHjBrQNXGkwO8ASDPJW-Lv-Vf__EilcN74_XzRe_lRX5OWR85pd8skiOkQA/pub?output=csv"
-    csv_text = requests.get(csv_url).text
-    print(csv_text)  # Make sure you see comma-separated text with a Timestamp column
-    
-    # df_news = fetch_news_data(csv_url)
-    df_news = pd.read_csv(io.StringIO(csv_text))
-    print(df_news.columns)  # Should see ["Timestamp", "Ticker", "News", ...]
-
+    csv_url = "https://docs.google.com/spreadsheets/d/1CVYvmxScK_v-sm-SISoK9cMnSLKR4L3o3dfuToIhdwI/pub?output=csv"
+    df_news = fetch_news_data(csv_url)
     df_sentiment = analyze_sentiment_for_news(df_news, ticker="AAPL")
     st.write("Sentiment Analysis Results:")
     st.dataframe(df_sentiment)
-
+    # Optionally, display the sentiment plot:
+    # st.pyplot(plt.gcf())
+    # Get the figure from the plot function and display it
     fig = plot_sentiment(df_sentiment)
     if fig:
         st.pyplot(fig)
-    else:
-        st.info("No valid sentiment data to plot, or 'Timestamp' column is missing/invalid.")
 
 # ------------------------------------------------------------------------------
 # Final Tabs
 # ------------------------------------------------------------------------------
+# Display the overall summary and individual stock analysis in tabbed format
 if "stock_data" in st.session_state and st.session_state["stock_data"]:
     tickers_list = list(st.session_state["stock_data"].keys())
     tab_names = ["Overall Summary"] + tickers_list
@@ -577,6 +640,7 @@ if "stock_data" in st.session_state and st.session_state["stock_data"]:
     overall_results = []
     analysis_results = st.session_state.get("analysis_results", {})
 
+    # Loop through each ticker to render its analysis and chart
     for i, tkr in enumerate(tickers_list):
         result = analysis_results.get(tkr, {})
         fig = st.session_state.get(f"plotly_fig_{tkr}")
@@ -598,14 +662,20 @@ if "stock_data" in st.session_state and st.session_state["stock_data"]:
                 else:
                     st.info("AI analysis not yet run.")
 
+                # -------------- Prevent app rerun by using a base64 link instead of st.download_button -------------
                 buf = BytesIO()
                 fig.write_image(buf, format="png", engine="kaleido")
                 buf.seek(0)
+
+                # Encode the image bytes as a base64 string for download
                 b64_data = base64.b64encode(buf.read()).decode("utf-8")
+
                 download_filename = f"{tkr}_chart.png"
                 download_link = f'<a href="data:image/png;base64,{b64_data}" download="{download_filename}">**Download Chart as PNG**</a>'
+
                 st.markdown(download_link, unsafe_allow_html=True)
 
+    # Display overall summary tab with a table of recommendations
     with tabs[0]:
         st.subheader("Overall Structured Recommendations")
         if "analysis_results" not in st.session_state:
