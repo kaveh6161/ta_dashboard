@@ -1,0 +1,15 @@
+[project]
+name = "ta-dashboard"
+version = "0.1.0"
+description = "AI powered TA dashboard"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-generativeai==0.8.4",
+    "kaleido==0.2.1",
+    "pandas==2.2.3",
+    "plotly==6.0.0",
+    "streamlit==1.42.0",
+    "ta==0.11.0",
+    "yfinance==0.2.40",
+]
