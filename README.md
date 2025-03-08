@@ -52,7 +52,9 @@ OR, with `UV`:
 echo $VIRTUAL_ENV
 # deactivate it if it's not your desired project
 deactivate
+# if there are no virtual environments available in the project folder
 # navigate to the project directory, then:
+python3 -m venv .venv
 source .venv/bin/activate
 
 ##
