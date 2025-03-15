@@ -2,7 +2,7 @@
 
 # News Sentiment Analysis Modules
 from news_gathering import main_news
-from sentiment_analysis import fetch_news_data, analyze_sentiment_for_news, plot_sentiment
+from sentiment_analysis import fetch_news_data, analyze_sentiment_for_news, plot_sentiment, analyze_and_plot_by_ticker, save_ticker_charts
 
 import streamlit as st  # Web app framework for interactive dashboards
 import yfinance as yf  # Library for fetching stock data from Yahoo Finance
@@ -541,18 +541,12 @@ if st.sidebar.button("Run AI Technical Analysis"):
 # ------------------------------------------------------------------------------
 st.sidebar.header("News & Sentiment Analysis")
 
-# Add a dropdown to select which ticker to analyze for news
-selected_news_ticker = st.sidebar.selectbox(
-    "Select Ticker for News Analysis:",
-    tickers if tickers else ["AAPL"],
-    index=0
-)
-
 if st.sidebar.button("Fetch and Submit News"):
     forms_url = "https://docs.google.com/forms/d/e/1FAIpQLSd4thJmOPdR04W998INg6CeVDViR6HZu0KDveQQoL_aL5H3NQ/formResponse"
-    news_data = main_news(selected_news_ticker, forms_url)
-    if news_data:
-        st.success(f"News data fetched and submitted for {selected_news_ticker}!")
+    for ticker in tickers:
+        news_data = main_news(ticker, forms_url)
+        if news_data:
+            st.success(f"News data fetched and submitted for {ticker}!")
 
 if st.sidebar.button("Run AI Sentiment Analysis"):
     csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQrwIWMC_TxpeQENtV6SdHjBrQNXGkwO8ASDPJW-Lv-Vf__EilcN74_XzRe_lRX5OWR85pd8skiOkQA/pub?output=csv"
@@ -563,15 +557,38 @@ if st.sidebar.button("Run AI Sentiment Analysis"):
     df_news = pd.read_csv(io.StringIO(csv_text))
     print(df_news.columns)  # Should see ["Timestamp", "Ticker", "News", ...]
 
-    df_sentiment = analyze_sentiment_for_news(df_news, ticker=selected_news_ticker)
-    st.write("Sentiment Analysis Results:")
-    st.dataframe(df_sentiment)
-
-    fig = plot_sentiment(df_sentiment)
-    if fig:
-        st.pyplot(fig)
-    else:
-        st.info("No valid sentiment data to plot, or 'Timestamp' column is missing/invalid.")
+    # Create tabs for each ticker's sentiment analysis
+    sentiment_tabs = st.tabs(tickers)
+    
+    # Use new analyze_and_plot_by_ticker function to process all tickers at once
+    ticker_figures = analyze_and_plot_by_ticker(df_news)
+    
+    # Create a directory for saving charts if "save_charts" is checked
+    save_charts = st.sidebar.checkbox("Save Sentiment Charts to Files", value=False)
+    chart_dir = "sentiment_charts"
+    saved_files = []
+    
+    if save_charts:
+        saved_files = save_ticker_charts(ticker_figures, chart_dir)
+        if saved_files:
+            st.success(f"Saved {len(saved_files)} charts to {chart_dir}/ directory")
+    
+    # Individual tabs for each ticker
+    for i, ticker in enumerate(tickers):
+        with sentiment_tabs[i]:
+            # Get ticker-specific data
+            ticker_data = df_news[df_news['Ticker'] == ticker] if 'Ticker' in df_news.columns else pd.DataFrame()
+            
+            if not ticker_data.empty:
+                st.write(f"Sentiment Analysis Results for {ticker}:")
+                st.dataframe(ticker_data)
+                
+                if ticker in ticker_figures and ticker_figures[ticker] is not None:
+                    st.pyplot(ticker_figures[ticker])
+                else:
+                    st.info(f"No valid sentiment data to plot for {ticker}")
+            else:
+                st.info(f"No news data found for {ticker}")
 
 # ------------------------------------------------------------------------------
 # Final Tabs
