@@ -541,12 +541,18 @@ if st.sidebar.button("Run AI Technical Analysis"):
 # ------------------------------------------------------------------------------
 st.sidebar.header("News & Sentiment Analysis")
 
+# Add a dropdown to select which ticker to analyze for news
+selected_news_ticker = st.sidebar.selectbox(
+    "Select Ticker for News Analysis:",
+    tickers if tickers else ["AAPL"],
+    index=0
+)
+
 if st.sidebar.button("Fetch and Submit News"):
-    ticker = "AAPL"
     forms_url = "https://docs.google.com/forms/d/e/1FAIpQLSd4thJmOPdR04W998INg6CeVDViR6HZu0KDveQQoL_aL5H3NQ/formResponse"
-    news_data = main_news(ticker, forms_url)
+    news_data = main_news(selected_news_ticker, forms_url)
     if news_data:
-        st.success("News data fetched and submitted!")
+        st.success(f"News data fetched and submitted for {selected_news_ticker}!")
 
 if st.sidebar.button("Run AI Sentiment Analysis"):
     csv_url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQrwIWMC_TxpeQENtV6SdHjBrQNXGkwO8ASDPJW-Lv-Vf__EilcN74_XzRe_lRX5OWR85pd8skiOkQA/pub?output=csv"
@@ -557,7 +563,7 @@ if st.sidebar.button("Run AI Sentiment Analysis"):
     df_news = pd.read_csv(io.StringIO(csv_text))
     print(df_news.columns)  # Should see ["Timestamp", "Ticker", "News", ...]
 
-    df_sentiment = analyze_sentiment_for_news(df_news, ticker="AAPL")
+    df_sentiment = analyze_sentiment_for_news(df_news, ticker=selected_news_ticker)
     st.write("Sentiment Analysis Results:")
     st.dataframe(df_sentiment)
 
